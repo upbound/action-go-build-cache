@@ -15,8 +15,8 @@ AWS_REGION="${INPUT_AWS_REGION:-us-east-1}"
 GOCACHE="$(go env GOCACHE)"
 echo "GOCACHE resolved to: ${GOCACHE}"
 
-if [[ ! -d "${GOCACHE}" ]]; then
-  echo "GOCACHE directory does not exist: ${GOCACHE} — nothing to save."
+if [[ ! -d "${GOCACHE}" ]] || [[ -z "$(ls -A "${GOCACHE}")" ]]; then
+  echo "GOCACHE is empty or does not exist: ${GOCACHE} — nothing to save."
   exit 0
 fi
 

@@ -21,6 +21,11 @@ echo "GOCACHE resolved to: ${GOCACHE}"
 # ---------------------------------------------------------------------------
 TEMP_ARCHIVE="/tmp/go-build-cache-$$.tar.zst"
 
+# CACHE_HIT=true only on exact key match
+# RESTORED=true on any successful extraction (exact or fallback)
+CACHE_HIT="false"
+RESTORED="false"
+
 s3_object_exists() {
   aws s3api head-object \
     --bucket "${BUCKET}" \
@@ -35,69 +40,82 @@ download_and_extract() {
   aws s3 cp "s3://${BUCKET}/${object_key}" "${TEMP_ARCHIVE}" \
     --region "${AWS_REGION}"
 
+  local archive_size
+  archive_size="$(du -sh "${TEMP_ARCHIVE}" | cut -f1)"
+  echo "Archive size: ${archive_size}"
+
   echo "Extracting into $(dirname "${GOCACHE}") ..."
   mkdir -p "$(dirname "${GOCACHE}")"
   tar --zstd -xf "${TEMP_ARCHIVE}" -C "$(dirname "${GOCACHE}")"
   rm -f "${TEMP_ARCHIVE}"
-  echo "Cache extracted to: ${GOCACHE}"
+  echo "Extraction complete: ${GOCACHE}"
 }
 
 # ---------------------------------------------------------------------------
 # Exact key lookup
 # ---------------------------------------------------------------------------
 EXACT_OBJECT="${PROVIDER}/${KEY}.tar.zst"
-echo "Checking exact key: ${EXACT_OBJECT}"
-
-CACHE_HIT="false"
+echo "::group::Restore Go Build Cache"
+echo "Trying exact key: s3://${BUCKET}/${EXACT_OBJECT}"
 
 if s3_object_exists "${EXACT_OBJECT}"; then
-  echo "Exact cache hit: ${EXACT_OBJECT}"
+  echo "Exact cache hit!"
   download_and_extract "${EXACT_OBJECT}"
   CACHE_HIT="true"
+  RESTORED="true"
+else
+  echo "Exact key not found."
 fi
 
 # ---------------------------------------------------------------------------
 # Fallback prefix search (tier 1: same branch, tier 2: any branch)
-# Restore-keys is a newline-separated list of prefixes, tried in order.
-# For each prefix we list all matching objects and pick the latest.
 # ---------------------------------------------------------------------------
-if [[ "${CACHE_HIT}" == "false" ]] && [[ -n "${RESTORE_KEYS}" ]]; then
+if [[ "${RESTORED}" == "false" ]] && [[ -n "${RESTORE_KEYS}" ]]; then
+  echo "Trying restore-key prefixes..."
   while IFS= read -r prefix; do
-    # trim whitespace
     prefix="$(echo "${prefix}" | xargs)"
     [[ -z "${prefix}" ]] && continue
 
     S3_PREFIX="${PROVIDER}/${prefix}"
-    echo "Trying restore-key prefix: ${S3_PREFIX}"
+    echo "  Searching prefix: s3://${BUCKET}/${S3_PREFIX}*"
 
-    latest_key="$(aws s3api list-objects-v2 \
+    if ! latest_key="$(aws s3api list-objects-v2 \
       --bucket "${BUCKET}" \
       --prefix "${S3_PREFIX}" \
       --region "${AWS_REGION}" \
       --query 'sort_by(Contents, &LastModified)[-1].Key' \
-      --output text 2>/dev/null || true)"
-
-    # list-objects-v2 returns "None" when no objects match
-    if [[ -n "${latest_key}" ]] && [[ "${latest_key}" != "None" ]]; then
-      echo "Fallback cache hit: ${latest_key}"
-      download_and_extract "${latest_key}"
-      CACHE_HIT="false"   # partial hit — not an exact match
-      break
+      --output text 2>&1)"; then
+      echo "  ERROR: Failed to list S3 objects: ${latest_key}"
+      exit 1
     fi
 
-    echo "No objects found for prefix: ${S3_PREFIX}"
+    if [[ -n "${latest_key}" ]] && [[ "${latest_key}" != "None" ]]; then
+      echo "  Fallback hit: s3://${BUCKET}/${latest_key}"
+      download_and_extract "${latest_key}"
+      RESTORED="true"
+      break
+    else
+      echo "  No objects found."
+    fi
   done <<< "${RESTORE_KEYS}"
 fi
+
+echo "::endgroup::"
 
 # ---------------------------------------------------------------------------
 # Final output
 # ---------------------------------------------------------------------------
 echo "cache-hit=${CACHE_HIT}" >> "${GITHUB_OUTPUT}"
 
+echo "--- Cache Restore Summary ---"
+echo "  Bucket:    s3://${BUCKET}"
+echo "  Provider:  ${PROVIDER}"
+echo "  Exact key: ${KEY}"
 if [[ "${CACHE_HIT}" == "true" ]]; then
-  echo "Result: exact cache hit — full reuse expected."
-elif [[ -d "${GOCACHE}" ]]; then
-  echo "Result: partial cache restored — Go will reuse unchanged artifacts."
+  echo "  Result:    Exact hit — full reuse expected."
+elif [[ "${RESTORED}" == "true" ]]; then
+  echo "  Result:    Fallback hit — Go will reuse unchanged artifacts."
 else
-  echo "Result: cold miss — no cache found, full build ahead."
+  echo "  Result:    Cold miss — no cache found, full build ahead."
 fi
+echo "-----------------------------"
