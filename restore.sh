@@ -106,7 +106,7 @@ echo "::endgroup::"
 # Final output
 # ---------------------------------------------------------------------------
 echo "cache-hit=${CACHE_HIT}" >> "${GITHUB_OUTPUT}"
-echo "cache-hit=${CACHE_HIT}" >> "${GITHUB_STATE}"
+echo "cache_hit=${CACHE_HIT}" >> "${GITHUB_STATE}"
 
 echo "--- Cache Restore Summary ---"
 echo "  Bucket:    s3://${BUCKET}"
