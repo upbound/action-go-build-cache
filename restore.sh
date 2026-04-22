@@ -103,12 +103,13 @@ fi
 echo "::endgroup::"
 
 # ---------------------------------------------------------------------------
-# Marker — records the point in time after restore, before build.
-# save.sh uses this to detect new artifacts compiled during the build.
+# Fingerprint — hash of the artifact file list after restore.
+# save.sh compares this against the post-build state to detect new artifacts.
+# Only artifact files (depth 2 inside hash subdirs) are considered —
+# trim.txt and other Go housekeeping files at depth 1 are excluded.
 # ---------------------------------------------------------------------------
-MARKER="/tmp/go-cache-marker-$$"
-touch "${MARKER}"
-echo "cache_marker=${MARKER}" >> "${GITHUB_STATE}"
+gocache_fingerprint="$(find "${GOCACHE}" -mindepth 2 -maxdepth 2 -type f | sort | sha256sum | cut -d' ' -f1)"
+echo "cache_fingerprint=${gocache_fingerprint}" >> "${GITHUB_STATE}"
 
 # ---------------------------------------------------------------------------
 # Final output
