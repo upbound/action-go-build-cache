@@ -16,8 +16,15 @@ GOCACHE="$(go env GOCACHE)"
 echo "GOCACHE resolved to: ${GOCACHE}"
 
 if [[ "${STATE_cache_hit:-false}" == "true" ]]; then
-  echo "Exact cache hit on restore — skipping upload, object already exists in S3."
-  exit 0
+  MARKER="${STATE_cache_marker:-}"
+  if [[ -n "${MARKER}" ]] && [[ -f "${MARKER}" ]]; then
+    new_files="$(find "${GOCACHE}" -newer "${MARKER}" -type f 2>/dev/null | wc -l)"
+    if [[ "${new_files}" -eq 0 ]]; then
+      echo "Exact cache hit and no new artifacts compiled — skipping upload."
+      exit 0
+    fi
+    echo "Exact cache hit but ${new_files} new artifact(s) detected (e.g. additional arch) — uploading enriched cache."
+  fi
 fi
 
 if [[ ! -d "${GOCACHE}" ]] || [[ -z "$(ls -A "${GOCACHE}")" ]]; then

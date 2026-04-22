@@ -103,6 +103,14 @@ fi
 echo "::endgroup::"
 
 # ---------------------------------------------------------------------------
+# Marker — records the point in time after restore, before build.
+# save.sh uses this to detect new artifacts compiled during the build.
+# ---------------------------------------------------------------------------
+MARKER="/tmp/go-cache-marker-$$"
+touch "${MARKER}"
+echo "cache_marker=${MARKER}" >> "${GITHUB_STATE}"
+
+# ---------------------------------------------------------------------------
 # Final output
 # ---------------------------------------------------------------------------
 echo "cache-hit=${CACHE_HIT}" >> "${GITHUB_OUTPUT}"
