@@ -15,6 +15,11 @@ AWS_REGION="${INPUT_AWS_REGION:-us-east-1}"
 GOCACHE="$(go env GOCACHE)"
 echo "GOCACHE resolved to: ${GOCACHE}"
 
+if [[ "${STATE_cache_hit}" == "true" ]]; then
+  echo "Exact cache hit on restore — skipping upload, object already exists in S3."
+  exit 0
+fi
+
 if [[ ! -d "${GOCACHE}" ]] || [[ -z "$(ls -A "${GOCACHE}")" ]]; then
   echo "GOCACHE is empty or does not exist: ${GOCACHE} — nothing to save."
   exit 0
