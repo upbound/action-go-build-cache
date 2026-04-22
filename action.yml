@@ -1,0 +1,35 @@
+name: Go Build Cache
+description: Restore and save Go build cache (GOCACHE) using an S3 bucket. Save runs automatically as a post-step.
+
+inputs:
+  provider:
+    description: 'Provider name used as the S3 key prefix (e.g. aws, azure, gcp). Isolates each provider cache in the shared bucket.'
+    required: true
+  key:
+    description: 'Exact cache key. Recommended format: ${{ runner.os }}-go-build-<branch>-${{ hashFiles(''**/go.sum'') }}'
+    required: true
+  restore-keys:
+    description: |
+      Newline-separated list of key prefixes for fallback restore, tried in order.
+      Recommended:
+        ${{ runner.os }}-go-build-<branch>-
+        ${{ runner.os }}-go-build-
+    required: false
+    default: ''
+  bucket:
+    description: 'S3 bucket name.'
+    required: true
+  aws-region:
+    description: 'AWS region where the bucket lives.'
+    required: false
+    default: 'us-east-1'
+
+outputs:
+  cache-hit:
+    description: "'true' if the exact key was found in S3, 'false' otherwise (includes fallback hits and cold misses)."
+
+runs:
+  using: node20
+  main: index.js
+  post: index.js
+  post-if: always()

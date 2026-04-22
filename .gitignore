@@ -1,0 +1,17 @@
+# Copyright 2024 Upbound Inc.
+# All rights reserved
+
+/.cache
+/.work
+/_output
+/vendor
+.DS_Store
+kubeconfig
+/venv
+
+# ignore IDE folders
+.vscode/
+.idea/
+
+# packages
+*.xpkg
