@@ -4,17 +4,26 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Inputs (set by GitHub Actions from action.yml `inputs`)
 # ---------------------------------------------------------------------------
-PROVIDER="${INPUT_PROVIDER}"
+# Sanitize: replace / with - so raw values like "upbound/provider-upjet-aws"
+# or "refs/heads/main" are safe to use as S3 key path segments.
+REPOSITORY="$(echo "${INPUT_REPOSITORY}" | tr '/' '-')"
+BRANCH="$(echo "${INPUT_BRANCH}" | tr '/' '-')"
 KEY="${INPUT_KEY}"
 RESTORE_KEYS="${INPUT_RESTORE_KEYS:-}"
 BUCKET="${INPUT_BUCKET}"
 AWS_REGION="${INPUT_AWS_REGION:-us-east-1}"
+CACHE_PATH="${INPUT_PATH:-}"
 
 # ---------------------------------------------------------------------------
-# Resolve GOCACHE path
+# Resolve cache path — use explicit path input or fall back to GOCACHE
 # ---------------------------------------------------------------------------
-GOCACHE="$(go env GOCACHE)"
-echo "GOCACHE resolved to: ${GOCACHE}"
+if [[ -n "${CACHE_PATH}" ]]; then
+  CACHE_DIR="${CACHE_PATH}"
+  echo "Cache path (explicit): ${CACHE_DIR}"
+else
+  CACHE_DIR="$(go env GOCACHE)"
+  echo "Cache path (GOCACHE): ${CACHE_DIR}"
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,17 +53,18 @@ download_and_extract() {
   archive_size="$(du -sh "${TEMP_ARCHIVE}" | cut -f1)"
   echo "Archive size: ${archive_size}"
 
-  echo "Extracting into $(dirname "${GOCACHE}") ..."
-  mkdir -p "$(dirname "${GOCACHE}")"
-  tar --zstd -xf "${TEMP_ARCHIVE}" -C "$(dirname "${GOCACHE}")"
+  echo "Extracting into $(dirname "${CACHE_DIR}") ..."
+  mkdir -p "$(dirname "${CACHE_DIR}")"
+  tar --zstd -xf "${TEMP_ARCHIVE}" -C "$(dirname "${CACHE_DIR}")"
   rm -f "${TEMP_ARCHIVE}"
-  echo "Extraction complete: ${GOCACHE}"
+  echo "Extraction complete: ${CACHE_DIR}"
 }
 
 # ---------------------------------------------------------------------------
+# S3 object layout: <repository>/<branch>/<key>.tar.zst
 # Exact key lookup
 # ---------------------------------------------------------------------------
-EXACT_OBJECT="${PROVIDER}/${KEY}.tar.zst"
+EXACT_OBJECT="${REPOSITORY}/${BRANCH}/${KEY}.tar.zst"
 echo "::group::Restore Go Build Cache"
 echo "Trying exact key: s3://${BUCKET}/${EXACT_OBJECT}"
 
@@ -68,7 +78,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Fallback prefix search (tier 1: same branch, tier 2: any branch)
+# Fallback prefix search
+# Tier 1 (caller-supplied restore-keys): same branch prefixes, then any-branch
+# prefixes — searched under <repository>/<branch>/ and <repository>/ respectively.
+# The caller controls the fallback order via restore-keys.
 # ---------------------------------------------------------------------------
 if [[ "${RESTORED}" == "false" ]] && [[ -n "${RESTORE_KEYS}" ]]; then
   echo "Trying restore-key prefixes..."
@@ -76,7 +89,10 @@ if [[ "${RESTORED}" == "false" ]] && [[ -n "${RESTORE_KEYS}" ]]; then
     prefix="$(echo "${prefix}" | xargs)"
     [[ -z "${prefix}" ]] && continue
 
-    S3_PREFIX="${PROVIDER}/${prefix}"
+    # Prefix is always scoped under <repository>/<branch>/ — fallback is
+    # limited to the same branch. Cross-branch fallback is not supported
+    # via restore-keys; add a separate action step for that if needed.
+    S3_PREFIX="${REPOSITORY}/${BRANCH}/${prefix}"
     echo "  Searching prefix: s3://${BUCKET}/${S3_PREFIX}*"
 
     if ! latest_key="$(aws s3api list-objects-v2 \
@@ -108,8 +124,9 @@ echo "::endgroup::"
 # Only artifact files (depth 2 inside hash subdirs) are considered —
 # trim.txt and other Go housekeeping files at depth 1 are excluded.
 # ---------------------------------------------------------------------------
-gocache_fingerprint="$(find "${GOCACHE}" -mindepth 2 -maxdepth 2 -type f | sort | sha256sum | cut -d' ' -f1)"
-echo "cache_fingerprint=${gocache_fingerprint}" >> "${GITHUB_STATE}"
+cache_fingerprint="$(find "${CACHE_DIR}" -mindepth 2 -maxdepth 2 -type f | sort | sha256sum | cut -d' ' -f1)"
+echo "cache_fingerprint=${cache_fingerprint}" >> "${GITHUB_STATE}"
+echo "cache_dir=${CACHE_DIR}" >> "${GITHUB_STATE}"
 
 # ---------------------------------------------------------------------------
 # Final output
@@ -118,14 +135,16 @@ echo "cache-hit=${CACHE_HIT}" >> "${GITHUB_OUTPUT}"
 echo "cache_hit=${CACHE_HIT}" >> "${GITHUB_STATE}"
 
 echo "--- Cache Restore Summary ---"
-echo "  Bucket:    s3://${BUCKET}"
-echo "  Provider:  ${PROVIDER}"
-echo "  Exact key: ${KEY}"
+echo "  Bucket:     s3://${BUCKET}"
+echo "  Repository: ${REPOSITORY}"
+echo "  Branch:     ${BRANCH}"
+echo "  Exact key:  ${KEY}"
+echo "  Cache dir:  ${CACHE_DIR}"
 if [[ "${CACHE_HIT}" == "true" ]]; then
-  echo "  Result:    Exact hit — full reuse expected."
+  echo "  Result:     Exact hit — full reuse expected."
 elif [[ "${RESTORED}" == "true" ]]; then
-  echo "  Result:    Fallback hit — Go will reuse unchanged artifacts."
+  echo "  Result:     Fallback hit — Go will reuse unchanged artifacts."
 else
-  echo "  Result:    Cold miss — no cache found, full build ahead."
+  echo "  Result:     Cold miss — no cache found, full build ahead."
 fi
 echo "-----------------------------"

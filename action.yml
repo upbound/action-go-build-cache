@@ -2,11 +2,14 @@ name: Go Build Cache
 description: Restore and save Go build cache (GOCACHE) using an S3 bucket. Save runs automatically as a post-step.
 
 inputs:
-  provider:
-    description: 'Provider name used as the S3 key prefix (e.g. aws, azure, gcp). Isolates each provider cache in the shared bucket.'
+  repository:
+    description: 'Repository name used as the first-level S3 prefix (e.g. upbound/provider-upjet-aws). Slashes are normalized to hyphens internally in the action.'
+    required: true
+  branch:
+    description: 'Branch or ref used as the second-level S3 prefix (e.g. main, release/v2). Slashes are normalized to hyphens internally in the action.'
     required: true
   key:
-    description: 'Exact cache key. Recommended format: <runner.os>-go-build-<branch>-<go.sum hash>'
+    description: 'Exact cache key. Recommended format: <runner.os>-go-build-<go.sum hash>'
     required: true
   restore-keys:
     description: 'Newline-separated list of key prefixes for fallback restore, tried in order.'
@@ -19,6 +22,10 @@ inputs:
     description: 'AWS region where the bucket lives.'
     required: false
     default: 'us-east-1'
+  path:
+    description: 'Local directory to cache. Defaults to the Go build cache directory (go env GOCACHE). Override to cache a different directory or maintain multiple caches per (repository, branch) pair.'
+    required: false
+    default: ''
 
 outputs:
   cache-hit:
